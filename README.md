@@ -65,6 +65,20 @@ After registering, check your email and activate the account using the Periplus 
 Warning: Your account with this email address has not been activated.
 ```
 
+## Test Case Mapping
+
+| Field | Details |
+| --- | --- |
+| Test Case ID | `TC_CART_001` |
+| Test Scenario / Title | Verify that a logged-in Periplus user can search for a product and add it to the shopping cart. |
+| Preconditions | User has a registered and activated Periplus account. Java 17 or newer is installed. Gradle is installed. Google Chrome is installed. Internet connection is available. |
+| Test Data | `PERIPLUS_EMAIL`, `PERIPLUS_PASSWORD`, and product search keyword. Default keyword: `Meditations`. |
+| Test Steps | 1. Open Google Chrome. 2. Navigate to `https://www.periplus.com/`. 3. Open the login page. 4. Enter email and password. 5. Submit login. 6. Search for a product. 7. Choose the first available product with an Add to cart button. 8. Add the product to the cart. 9. Open the cart page. |
+| Expected Result | Login succeeds, cart count increases by one, and the selected product title appears in the shopping cart. |
+| Actual Result | Generated after execution in the Gradle report: `build/reports/tests/test/index.html`. |
+| Status | Pass or Fail based on the latest Gradle/TestNG execution result. |
+| Priority / Severity | High priority / Critical severity because login, search, and add-to-cart are core e-commerce flows. |
+
 ## Environment Variables
 
 Use environment variables for credentials. Do not hard-code your email or password in the Java test.
