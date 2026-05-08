@@ -1,0 +1,34 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.openway'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+dependencies {
+    testImplementation 'org.seleniumhq.selenium:selenium-java:4.33.0'
+    testImplementation 'org.testng:testng:7.10.2'
+    testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.17'
+}
+
+test {
+    useTestNG {
+        suites 'testng.xml'
+    }
+
+    systemProperty 'periplus.email', System.getProperty('periplus.email', '')
+    systemProperty 'periplus.password', System.getProperty('periplus.password', '')
+    systemProperty 'periplus.productQuery', System.getProperty('periplus.productQuery', 'Meditations')
+    systemProperty 'headless', System.getProperty('headless', 'false')
+    systemProperty 'browser.timeout.seconds', System.getProperty('browser.timeout.seconds', '25')
+
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat = 'full'
+    }
+}
