@@ -21,6 +21,8 @@ test {
         suites 'testng.xml'
     }
 
+    outputs.upToDateWhen { false }
+
     systemProperty 'periplus.email', System.getProperty('periplus.email', '')
     systemProperty 'periplus.password', System.getProperty('periplus.password', '')
     systemProperty 'periplus.productQuery', System.getProperty('periplus.productQuery', 'Meditations')
