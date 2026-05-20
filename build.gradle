@@ -25,9 +25,14 @@ test {
 
     systemProperty 'periplus.email', System.getProperty('periplus.email', '')
     systemProperty 'periplus.password', System.getProperty('periplus.password', '')
-    systemProperty 'periplus.productQuery', System.getProperty('periplus.productQuery', 'Meditations')
+    systemProperty 'periplus.baseUrl', System.getProperty('periplus.baseUrl', 'https://www.periplus.com/')
+    systemProperty 'periplus.productQuery', System.getProperty('periplus.productQuery', 'Harry Potter')
+    systemProperty 'periplus.productId', System.getProperty('periplus.productId', '')
+    systemProperty 'periplus.productIsbn', System.getProperty('periplus.productIsbn', '')
+    systemProperty 'periplus.cartQuantity', System.getProperty('periplus.cartQuantity', '2')
     systemProperty 'headless', System.getProperty('headless', 'false')
     systemProperty 'browser.timeout.seconds', System.getProperty('browser.timeout.seconds', '25')
+    systemProperty 'chrome.binary', System.getProperty('chrome.binary', '')
 
     testLogging {
         events 'passed', 'skipped', 'failed'

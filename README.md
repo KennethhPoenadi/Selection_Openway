@@ -7,10 +7,13 @@ The test covers this scenario:
 1. Open Google Chrome in a new window.
 2. Navigate to Periplus.
 3. Log in with a registered test account.
-4. Search for one product.
-5. Add one available product to the cart.
-6. Verify the cart count increases.
-7. Open the cart and verify the selected product appears there.
+4. Clear the cart so the scenario is isolated.
+5. Search for one available product.
+6. Add the product to the cart.
+7. Increase the cart quantity by the configured requested quantity.
+8. Verify the cart product id, ISBN, title, quantity, unit price, subtotal, total, and header count.
+9. Continue to checkout and verify the checkout flow opens for the next step.
+10. Restore the touched cart item to its original quantity after the test.
 
 ## Tech Stack
 
@@ -28,7 +31,12 @@ The test covers this scenario:
 ├── settings.gradle
 ├── testng.xml
 ├── README.md
-└── src/test/java/com/openway/periplus/PeriplusCartTest.java
+└── src/test/java/com/openway/periplus
+    ├── PeriplusCartTest.java
+    ├── config
+    ├── core
+    ├── model
+    └── pages
 ```
 
 ## Prerequisites
@@ -70,11 +78,11 @@ Warning: Your account with this email address has not been activated.
 | Field | Details |
 | --- | --- |
 | Test Case ID | `TC_CART_001` |
-| Test Scenario / Title | Verify that a logged-in Periplus user can search for a product and add it to the shopping cart. |
+| Test Scenario / Title | Verify that a logged-in Periplus user can search for a product, add multiple units to the shopping cart, validate cart totals, and continue to checkout. |
 | Preconditions | User has a registered and activated Periplus account. Java 17 or newer is installed. Gradle is installed. Google Chrome is installed. Internet connection is available. |
-| Test Data | `PERIPLUS_EMAIL`, `PERIPLUS_PASSWORD`, and product search keyword. Default keyword: `Meditations`. |
-| Test Steps | 1. Open Google Chrome. 2. Navigate to `https://www.periplus.com/`. 3. Open the login page. 4. Enter email and password. 5. Submit login. 6. Search for a product. 7. Choose the first available product with an Add to cart button. 8. Add the product to the cart. 9. Open the cart page. |
-| Expected Result | Login succeeds, cart count increases by one, and the selected product title appears in the shopping cart. |
+| Test Data | `PERIPLUS_EMAIL`, `PERIPLUS_PASSWORD`, product search keyword, optional product id / ISBN, and requested cart quantity. Default keyword: `Harry Potter`; default requested quantity: `2`. |
+| Test Steps | 1. Open Google Chrome. 2. Navigate to `https://www.periplus.com/`. 3. Open the login page. 4. Enter email and password. 5. Submit login. 6. Open the configured product detail page when product id / ISBN are provided, otherwise search and choose the first available product. 7. Capture the existing cart count, subtotal, and current quantity for the selected product if it already exists in the cart. 8. Add the product to the cart from the product detail page. 9. Open the cart page. 10. Update the product line quantity to existing quantity plus requested quantity. 11. Continue to checkout. 12. Restore the touched cart item to its original quantity during teardown. |
+| Expected Result | Login succeeds, selected product id and ISBN match from product detail to cart, product quantity increases by the requested quantity, cart subtotal/total increase by unit price multiplied by requested quantity, header cart count increases by requested quantity, checkout opens for the next checkout step, and the test does not leave the selected cart item changed after execution. |
 | Actual Result | Generated after execution in the Gradle report: `build/reports/tests/test/index.html`. |
 | Status | Pass or Fail based on the latest Gradle/TestNG execution result. |
 | Priority / Severity | High priority / Critical severity because login, search, and add-to-cart are core e-commerce flows. |
@@ -88,6 +96,14 @@ Recommended `.env` format:
 ```bash
 export PERIPLUS_EMAIL='your-test-email@example.com'
 export PERIPLUS_PASSWORD='your-test-password'
+export PERIPLUS_BASE_URL='https://www.periplus.com/'
+export PERIPLUS_PRODUCT_QUERY='Harry Potter'
+export PERIPLUS_PRODUCT_ID='66846208'
+export PERIPLUS_PRODUCT_ISBN='9798886633849'
+export PERIPLUS_CART_QUANTITY='2'
+export HEADLESS='false'
+export BROWSER_TIMEOUT_SECONDS='25'
+export CHROME_BINARY=''
 ```
 
 The `.env` file is ignored by Git through `.gitignore`.
@@ -126,13 +142,34 @@ gradle test -Dheadless=true
 
 ## Change Product Search Keyword
 
-The default product search keyword is `Meditations`.
+The default product search keyword is `Harry Potter`.
 
 To search for a different product:
 
 ```bash
 source .env
 gradle test -Dperiplus.productQuery='Atomic Habits'
+```
+
+## Pin A Specific Product
+
+For more deterministic runs, pass a Periplus product id, ISBN, or both. The search keyword must still return that product.
+
+```bash
+source .env
+gradle test \
+  -Dperiplus.productQuery='Harry Potter' \
+  -Dperiplus.productId='66846208' \
+  -Dperiplus.productIsbn='9798886633849'
+```
+
+## Change Cart Quantity
+
+The default quantity is `2`, so the scenario proves more than one unit can be added.
+
+```bash
+source .env
+gradle test -Dperiplus.cartQuantity=3
 ```
 
 ## Optional System Properties
@@ -143,7 +180,10 @@ You can pass values directly with `-D`:
 gradle test \
   -Dperiplus.email='your-test-email@example.com' \
   -Dperiplus.password='your-test-password' \
-  -Dperiplus.productQuery='Meditations' \
+  -Dperiplus.productQuery='Harry Potter' \
+  -Dperiplus.productId='66846208' \
+  -Dperiplus.productIsbn='9798886633849' \
+  -Dperiplus.cartQuantity=2 \
   -Dheadless=true \
   -Dbrowser.timeout.seconds=30
 ```
@@ -154,7 +194,11 @@ Available options:
 | --- | --- | --- | --- |
 | `periplus.email` | `PERIPLUS_EMAIL` | none | Periplus login email |
 | `periplus.password` | `PERIPLUS_PASSWORD` | none | Periplus login password |
-| `periplus.productQuery` | `PERIPLUS_PRODUCT_QUERY` | `Meditations` | Product keyword to search |
+| `periplus.baseUrl` | `PERIPLUS_BASE_URL` | `https://www.periplus.com/` | Periplus base URL |
+| `periplus.productQuery` | `PERIPLUS_PRODUCT_QUERY` | `Harry Potter` | Product keyword used when product id / ISBN are not pinned |
+| `periplus.productId` | `PERIPLUS_PRODUCT_ID` | none | Optional Periplus product id to pin the selected product |
+| `periplus.productIsbn` | `PERIPLUS_PRODUCT_ISBN` | none | Optional ISBN to open and pin the selected product detail page |
+| `periplus.cartQuantity` | `PERIPLUS_CART_QUANTITY` | `2` | Requested quantity to add. Values below `1` are raised to `1`. |
 | `headless` | `HEADLESS` | `false` | Run Chrome in headless mode |
 | `browser.timeout.seconds` | `BROWSER_TIMEOUT_SECONDS` | `25` | Selenium wait timeout |
 | `chrome.binary` | `CHROME_BINARY` | auto-detected on macOS | Custom Chrome binary path |
@@ -171,6 +215,12 @@ The raw XML result is here:
 
 ```text
 build/test-results/test/TEST-com.openway.periplus.PeriplusCartTest.xml
+```
+
+Failure screenshots are saved here when Selenium can capture the browser:
+
+```text
+build/reports/screenshots/
 ```
 
 ## Troubleshooting
@@ -220,7 +270,7 @@ gradle test -Dchrome.binary='/path/to/Google Chrome'
 
 ### Product is not added to cart
 
-The test skips products marked `CURRENTLY UNAVAILABLE` and chooses the first available product with an `Add to cart` button.
+When product id / ISBN are configured, the test opens that product detail page directly. Without a pinned product, it skips products marked `CURRENTLY UNAVAILABLE` and chooses the first available product with an `Add to cart` button.
 
 If a search keyword has no available products, choose another keyword:
 

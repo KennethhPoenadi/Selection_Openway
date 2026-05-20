@@ -1,226 +1,150 @@
 package com.openway.periplus;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Locale;
-import java.util.Optional;
 
-import org.openqa.selenium.By;
-import org.openqa.selenium.JavascriptExecutor;
-import org.openqa.selenium.Keys;
-import org.openqa.selenium.NoSuchElementException;
+import com.openway.periplus.config.TestConfig;
+import com.openway.periplus.core.BrowserFactory;
+import com.openway.periplus.core.FailureArtifacts;
+import com.openway.periplus.model.CartItem;
+import com.openway.periplus.model.ProductSummary;
+import com.openway.periplus.pages.CartPage;
+import com.openway.periplus.pages.HomePage;
+import com.openway.periplus.pages.LoginPage;
+import com.openway.periplus.pages.ProductPage;
+import com.openway.periplus.pages.SearchResultsPage;
 import org.openqa.selenium.WebDriver;
-import org.openqa.selenium.WebElement;
-import org.openqa.selenium.chrome.ChromeDriver;
-import org.openqa.selenium.chrome.ChromeOptions;
-import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 import org.testng.Assert;
-import org.testng.SkipException;
+import org.testng.ITestResult;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 public class PeriplusCartTest {
-    private static final String BASE_URL = "https://www.periplus.com/";
-    private static final By LOGIN_EMAIL = By.cssSelector("form#login input[name='email']");
-    private static final By LOGIN_PASSWORD = By.cssSelector("form#login input[name='password']");
-    private static final By LOGIN_BUTTON = By.cssSelector("form#login input[type='submit']");
-    private static final By DESKTOP_SEARCH = By.id("filter_name_desktop");
-    private static final By CART_TOTAL = By.id("cart_total");
-    private static final By PRODUCT_CARDS = By.cssSelector(".single-product");
-    private static final By ADD_TO_CART = By.cssSelector("a.addtocart[onclick^='update_total']");
-    private static final By PRODUCT_TITLE = By.cssSelector(".product-content h3 a");
-
+    private TestConfig config;
     private WebDriver driver;
     private WebDriverWait wait;
+    private ProductSummary touchedProduct;
+    private int originalTouchedProductQuantity;
+    private boolean shouldRestoreCart;
 
     @BeforeMethod
     public void setUp() {
-        skipWhenCredentialIsMissing("periplus.email", "PERIPLUS_EMAIL");
-        skipWhenCredentialIsMissing("periplus.password", "PERIPLUS_PASSWORD");
-
-        ChromeOptions options = new ChromeOptions();
-        options.addArguments("--window-size=1440,1000");
-        options.addArguments("--disable-notifications");
-        options.addArguments("--disable-popup-blocking");
-        options.addArguments("--remote-allow-origins=*");
-
-        findChromeBinary().ifPresent(options::setBinary);
-
-        if (Boolean.parseBoolean(readConfig("headless", "HEADLESS", "false"))) {
-            options.addArguments("--headless=new");
-        }
-
-        driver = new ChromeDriver(options);
-        wait = new WebDriverWait(driver, Duration.ofSeconds(readIntConfig("browser.timeout.seconds", "BROWSER_TIMEOUT_SECONDS", 25)));
+        config = TestConfig.load();
+        driver = BrowserFactory.createChrome(config);
+        wait = new WebDriverWait(driver, Duration.ofSeconds(config.browserTimeoutSeconds()));
     }
 
     @AfterMethod(alwaysRun = true)
-    public void tearDown() {
+    public void tearDown(ITestResult result) {
         if (driver != null) {
+            if (result.getStatus() == ITestResult.FAILURE) {
+                FailureArtifacts.captureScreenshot(driver, result);
+            }
+            restoreCartState();
             driver.quit();
         }
     }
 
-    @Test(description = "Login, find a product, add it to cart, and verify it is present")
-    public void addOneProductToCart() {
-        String email = requiredCredential("periplus.email", "PERIPLUS_EMAIL");
-        String password = requiredCredential("periplus.password", "PERIPLUS_PASSWORD");
-        String productQuery = readConfig("periplus.productQuery", "PERIPLUS_PRODUCT_QUERY", "Meditations");
+    @Test(description = "Verify a logged-in user can add multiple units of a selected product and continue to checkout")
+    public void addMultipleUnitsToCartAndVerifyCheckout() {
+        int requestedQuantity = config.cartQuantity();
 
-        login(email, password);
+        new LoginPage(driver, wait, config)
+                .open()
+                .loginAs(config.email(), config.password());
 
-        driver.get(BASE_URL);
-        waitUntilReady();
-        int initialCartCount = readCartCount();
+        ProductSummary selectedProduct = selectProduct();
 
-        searchFor(productQuery);
-        SelectedProduct product = selectFirstAvailableProduct();
-        click(product.addToCartButton());
+        CartPage cart = new CartPage(driver, wait, config).open();
+        int initialCartCount = cart.readCartCount();
+        int existingProductQuantity = cart.findItem(selectedProduct.productId())
+                .map(CartItem::quantity)
+                .orElse(0);
+        long initialSubtotal = cart.subtotal();
+        touchedProduct = selectedProduct;
+        originalTouchedProductQuantity = existingProductQuantity;
+        int expectedFinalProductQuantity = existingProductQuantity + requestedQuantity;
+        int expectedFinalCartCount = initialCartCount + requestedQuantity;
+        long expectedLineSubtotal = selectedProduct.unitPrice() * expectedFinalProductQuantity;
+        long expectedCartSubtotal = initialSubtotal + (selectedProduct.unitPrice() * requestedQuantity);
 
-        wait.until(driver -> readCartCount() > initialCartCount);
-        int updatedCartCount = readCartCount();
-        Assert.assertEquals(updatedCartCount, initialCartCount + 1, "The cart count should increase by one after adding a product.");
+        new ProductPage(driver, wait, config)
+                .open(selectedProduct)
+                .addToCart(selectedProduct);
+        shouldRestoreCart = true;
+        cart.waitForCartCount(initialCartCount + 1);
 
-        driver.get(BASE_URL + "checkout/cart");
-        waitUntilReady();
-        wait.until(ExpectedConditions.textToBePresentInElementLocated(By.cssSelector("body"), product.title()));
+        cart.open()
+                .setQuantity(selectedProduct, expectedFinalProductQuantity)
+                .waitForTotals(expectedCartSubtotal, expectedCartSubtotal);
+        cart.waitForCartCount(expectedFinalCartCount);
 
-        Assert.assertTrue(driver.getPageSource().toLowerCase(Locale.ROOT).contains(product.title().toLowerCase(Locale.ROOT)),
-                "The shopping cart should contain the selected product title: " + product.title());
+        CartItem cartItem = cart.requireItem(selectedProduct);
+
+        Assert.assertEquals(cartItem.productId(), selectedProduct.productId(),
+                "Cart item should keep the same Periplus product id as the selected product.");
+        Assert.assertEquals(cartItem.isbn(), selectedProduct.isbn(),
+                "Cart item should keep the same ISBN as the selected product.");
+        Assert.assertTrue(titleMatches(cartItem.title(), selectedProduct.title()),
+                "Cart item title should match the selected product.");
+        Assert.assertEquals(cartItem.unitPrice(), selectedProduct.unitPrice(),
+                "Cart unit price should match the selected product price.");
+        Assert.assertEquals(cartItem.quantity(), expectedFinalProductQuantity,
+                "Cart quantity should equal previous quantity plus the requested quantity.");
+        Assert.assertEquals(cartItem.lineSubtotal(), expectedLineSubtotal,
+                "Selected product line subtotal should equal unit price multiplied by final quantity.");
+        Assert.assertEquals(cart.subtotal(), expectedCartSubtotal,
+                "Cart subtotal should increase by unit price multiplied by requested quantity.");
+        Assert.assertEquals(cart.total(), expectedCartSubtotal,
+                "Cart total should match subtotal before shipping/payment charges are selected.");
+        Assert.assertEquals(cart.readCartCount(), expectedFinalCartCount,
+                "Header cart count should increase by the requested quantity.");
+
+        cart.proceedToCheckout()
+                .assertLoaded()
+                .assertReadyForNextCheckoutStep();
     }
 
-    private void login(String email, String password) {
-        driver.get(BASE_URL + "account/Login");
-        waitUntilReady();
-
-        type(LOGIN_EMAIL, email);
-        type(LOGIN_PASSWORD, password);
-        click(wait.until(ExpectedConditions.elementToBeClickable(LOGIN_BUTTON)));
-
-        wait.until(driver -> !driver.getCurrentUrl().contains("/account/Login")
-                || !driver.findElements(By.cssSelector(".warning, .alert, .error")).isEmpty());
-
-        Assert.assertFalse(driver.getCurrentUrl().contains("/account/Login"),
-                "Login did not complete. Periplus stayed on the login page. Page message: " + visiblePageText());
-    }
-
-    private void searchFor(String productQuery) {
-        WebElement search = wait.until(ExpectedConditions.elementToBeClickable(DESKTOP_SEARCH));
-        search.clear();
-        search.sendKeys(productQuery);
-        search.sendKeys(Keys.ENTER);
-
-        wait.until(ExpectedConditions.urlContains("/product/Search"));
-        wait.until(ExpectedConditions.presenceOfElementLocated(PRODUCT_CARDS));
-    }
-
-    private SelectedProduct selectFirstAvailableProduct() {
-        List<WebElement> cards = wait.until(ExpectedConditions.numberOfElementsToBeMoreThan(PRODUCT_CARDS, 0));
-
-        for (WebElement card : cards) {
-            if (card.getText().toUpperCase(Locale.ROOT).contains("CURRENTLY UNAVAILABLE")) {
-                continue;
-            }
-
-            List<WebElement> buttons = card.findElements(ADD_TO_CART);
-            if (buttons.isEmpty()) {
-                continue;
-            }
-
-            String title = card.findElement(PRODUCT_TITLE).getText().trim();
-            if (!title.isEmpty()) {
-                return new SelectedProduct(title, buttons.get(0));
-            }
+    private void restoreCartState() {
+        if (!shouldRestoreCart || touchedProduct == null) {
+            return;
         }
 
-        throw new AssertionError("No available product with an Add to cart button was found in the search results.");
-    }
-
-    private int readCartCount() {
         try {
-            String text = wait.until(ExpectedConditions.visibilityOfElementLocated(CART_TOTAL)).getText().trim();
-            String digits = text.replaceAll("[^0-9]", "");
-            return digits.isEmpty() ? 0 : Integer.parseInt(digits);
-        } catch (NoSuchElementException ignored) {
-            return 0;
+            new CartPage(driver, wait, config)
+                    .open()
+                    .restoreQuantity(touchedProduct, originalTouchedProductQuantity);
+        } catch (RuntimeException ignored) {
+            // Cleanup should preserve the real test result, not replace it with a teardown failure.
         }
     }
 
-    private void type(By locator, String value) {
-        WebElement element = wait.until(ExpectedConditions.elementToBeClickable(locator));
-        element.clear();
-        element.sendKeys(value);
-    }
-
-    private void click(WebElement element) {
-        wait.until(ExpectedConditions.elementToBeClickable(element));
-        ((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block: 'center'});", element);
-        ((JavascriptExecutor) driver).executeScript("arguments[0].click();", element);
-    }
-
-    private void waitUntilReady() {
-        wait.until(driver -> "complete".equals(((JavascriptExecutor) driver).executeScript("return document.readyState")));
-        wait.until(ExpectedConditions.invisibilityOfElementLocated(By.cssSelector(".preloader")));
-    }
-
-    private String visiblePageText() {
-        String bodyText = driver.findElement(By.tagName("body")).getText().replaceAll("\\s+", " ").trim();
-        return bodyText.length() > 500 ? bodyText.substring(0, 500) + "..." : bodyText;
-    }
-
-    private String requiredCredential(String propertyName, String envName) {
-        String value = readConfig(propertyName, envName, "");
-        if (value == null || value.isBlank()) {
-            throw new SkipException("Set " + envName + " or -D" + propertyName + " before running the live Periplus test.");
-        }
-        return value;
-    }
-
-    private void skipWhenCredentialIsMissing(String propertyName, String envName) {
-        String value = readConfig(propertyName, envName, "");
-        if (value == null || value.isBlank()) {
-            throw new SkipException("Set " + envName + " or -D" + propertyName + " before running the live Periplus test.");
-        }
-    }
-
-    private String readConfig(String propertyName, String envName, String defaultValue) {
-        String propertyValue = System.getProperty(propertyName);
-        if (propertyValue != null && !propertyValue.isBlank()) {
-            return propertyValue;
+    private ProductSummary selectProduct() {
+        if (config.productId().isPresent() && config.productIsbn().isPresent()) {
+            ProductSummary product = new ProductPage(driver, wait, config)
+                    .openByIsbn(config.productIsbn().orElseThrow())
+                    .summary(config.productIsbn().orElseThrow());
+            Assert.assertEquals(product.productId(), config.productId().orElseThrow(),
+                    "Configured product id should match the product detail page.");
+            return product;
         }
 
-        String envValue = System.getenv(envName);
-        if (envValue != null && !envValue.isBlank()) {
-            return envValue;
-        }
-
-        return defaultValue;
+        SearchResultsPage results = new HomePage(driver, wait, config)
+                .open()
+                .searchFor(config.productQuery());
+        return results.availableProduct(config.productId(), config.productIsbn());
     }
 
-    private int readIntConfig(String propertyName, String envName, int defaultValue) {
-        try {
-            return Integer.parseInt(readConfig(propertyName, envName, Integer.toString(defaultValue)));
-        } catch (NumberFormatException ignored) {
-            return defaultValue;
+    private boolean titleMatches(String cartTitle, String selectedTitle) {
+        String normalizedCartTitle = cartTitle.toLowerCase(Locale.ROOT).trim();
+        String normalizedSelectedTitle = selectedTitle.toLowerCase(Locale.ROOT).trim();
+        if (normalizedSelectedTitle.endsWith("...")) {
+            normalizedSelectedTitle = normalizedSelectedTitle.substring(0, normalizedSelectedTitle.length() - 3).trim();
         }
-    }
-
-    private Optional<String> findChromeBinary() {
-        String configured = readConfig("chrome.binary", "CHROME_BINARY", "");
-        if (!configured.isBlank()) {
-            return Optional.of(configured);
-        }
-
-        String macChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-        if (new java.io.File(macChrome).exists()) {
-            return Optional.of(macChrome);
-        }
-
-        return Optional.empty();
-    }
-
-    private record SelectedProduct(String title, WebElement addToCartButton) {
+        return !normalizedCartTitle.isBlank()
+                && !normalizedSelectedTitle.isBlank()
+                && normalizedCartTitle.contains(normalizedSelectedTitle);
     }
 }
